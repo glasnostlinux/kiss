@@ -1668,7 +1668,7 @@ main() {
         "${cac_dir:="${XDG_CACHE_HOME:-"${HOME:?HOME is null}/.cache"}/kiss"}" \
             "${src_dir:="$cac_dir/sources"}" \
             "${log_dir:="$cac_dir/logs/${date%-*}"}" \
-            "${bin_dir:="$cac_dir/bin"}" \
+            "${bin_dir:="$cac_dir/bin/"${KISS_BINREPO:-$(cat /etc/os-arch)}}" \
         "${tmp_dir:="${KISS_TMPDIR:="$cac_dir/proc"}/$pid"}" \
             "${mak_dir:="$tmp_dir/build"}" \
             "${pkg_dir:="$tmp_dir/pkg"}" \
