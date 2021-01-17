@@ -13,9 +13,10 @@ die() {
 clean() {
     log Unmounting /dev, /proc and /sys from chroot; {
         umount "$1/sys/firmware/efi/efivars" 2>/dev/null ||:
-        umount "$1/dev"  ||:
-        umount "$1/proc" ||:
-        umount "$1/sys"  ||:
+        umount "$1/dev/shm" ||:
+        umount "$1/dev"     ||:
+        umount "$1/proc"    ||:
+        umount "$1/sys"     ||:
     }
 
     log Cleaning leftover host files; {
@@ -45,9 +46,10 @@ mounted() {
 trap 'clean "$1"' EXIT INT
 
 log Mounting /dev, /proc and /sys from host; {
-    mounted "$1/dev"  || mount -o bind /dev "$1/dev"  ||:
-    mounted "$1/proc" || mount -t proc proc "$1/proc" ||:
-    mounted "$1/sys"  || mount -t sysfs sys "$1/sys"  ||:
+    mounted "$1/dev"     || mount -o bind /dev     "$1/dev"     ||:
+    mounted "$1/dev/shm" || mount -o bind /dev/shm "$1/dev/shm" ||:
+    mounted "$1/proc"    || mount -t proc proc "$1/proc"        ||:
+    mounted "$1/sys"     || mount -t sysfs sys "$1/sys"         ||:
 
     mounted "$1/sys/firmware/efi/efivars" ||
         mount -t efivarfs efivarfs "$1/sys/firmware/efi/efivars" 2>/dev/null ||:

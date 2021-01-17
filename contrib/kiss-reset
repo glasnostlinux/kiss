@@ -7,15 +7,17 @@ for pkg in "$KISS_ROOT/var/db/kiss/installed/"*; do
     pkg=${pkg##*/}
 
     case $pkg in
-        baselayout|binutils|bison|busybox|bzip2|curl|flex|gcc|git|\
-        gzip|kiss|libressl|linux-headers|m4|make|musl|xz|zlib) ;;
+        baseinit|baselayout|busybox|byacc|bzip2|cmake|curl|expat|\
+        flex|git|gzip|kiss|libffi|libressl|linux-headers|llvm|m4|\
+        make|musl|python|sqlite|xz|zlib);;
 
         *) set -- "$@" "$pkg" ;;
     esac
 done
 
 [ "$1" ] && {
-    printf 'WARNING: This will remove \033[1m%s\033[m package(s).\n' "$#"
+    printf 'WARNING: This will remove \033[1m%s\033[m package(s):\n' "$#"
+    printf '%s ' "$@"
     printf 'Continue? [Enter/Ctrl+C]\n'
     read -r _ && KISS_FORCE=1 kiss remove "$@"
 }
