@@ -1,0 +1,45 @@
+#!/bin/sh
+# Print suitable CFLAGS etc. for a Glasnost chroot
+
+log() {
+    printf '\033[32m->\033[m %s.\n' "$*"
+}
+
+die() {
+    log "$*" >&2
+    exit 1
+}
+
+if [ -z "$1" ]; then
+    die Need a path to the chroot
+fi
+
+# Set these values:
+target_arch="$(cat $1/etc/os-arch)"
+
+case $target_arch in
+   aarch64)     archflags=" -march=armv8-a -mtune=generic -Os -fPIC ";;
+   x86_64)      archflags=" -march=x86-64  -mtune=x86-64  -Os -fPIC ";;
+   powerpc64le) archflags=" -march=ppc64le -mtune=ppc64le -Os -fPIC ";;
+   powerpc64)   archflags=" -march=ppc64   -mtune=ppc64   -Os -fPIC ";;
+   *) echo "Unsupported platform: $target_arch"; exit 1;;
+esac
+
+echo "#!/bin/sh"
+echo ""
+echo "# Architecture-specific flags:"
+echo "archflags=\"$archflags\""
+echo ""
+echo ""
+echo "# You shouldn't need to change the below values:"
+echo "export KISS_ROOT=$(realpath $1)"
+echo "llvm_ver=\"\$(cat \$KISS_ROOT/var/db/kiss/installed/llvm/version | cut -d \" \" -f 1)\""
+echo "export CFLAGS=\"--target=\$(cat \${KISS_ROOT}/etc/os-arch)-glasnost-linux-musl --sysroot=\${KISS_ROOT}/usr -resource-dir=\${KISS_ROOT}/usr/lib/clang/\$llvm_ver \$archflags\""
+echo "export CXXFLAGS=\$CFLAGS"
+echo "export LDFLAGS=\"--sysroot=\$KISS_ROOT/usr -L\$KISS_ROOT/usr/lib\""
+echo "export CC=\"clang \$CFLAGS\""
+echo "export CXX=\"clang++ \$CXXFLAGS\""
+echo "export PKG_CONFIG_PATH="
+echo "export PKG_CONFIG_LIBDIR=\${KISS_ROOT}/usr/lib/pkgconfig:\${KISS_ROOT}/usr/share/pkgconfig"
+echo "export PKG_CONFIG_SYSROOT_DIR=\${KISS_ROOT}"
+
