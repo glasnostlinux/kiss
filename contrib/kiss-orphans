@@ -10,7 +10,6 @@ for pkg in *; do
         baselayout|busybox|bzip2|curl|\
         git|gzip|kiss|libressl|llvm|\
         make|musl|python|sqlite|xz|zlib)
-
             continue
     esac
 
