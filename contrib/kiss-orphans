@@ -9,7 +9,8 @@ for pkg in *; do
         # orphans. Exclude them from the list.
         baselayout|busybox|bzip2|curl|\
         git|gzip|kiss|libressl|llvm|\
-        make|musl|python|sqlite|xz|zlib)
+        make|musl|xz|zlib)
+
             continue
     esac
 
