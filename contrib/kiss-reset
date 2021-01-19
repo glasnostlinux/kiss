@@ -7,8 +7,8 @@ for pkg in "$KISS_ROOT/var/db/kiss/installed/"*; do
     pkg=${pkg##*/}
 
     case $pkg in
-        baseinit|baselayout|busybox|byacc|bzip2|cmake|curl|expat|\
-        flex|git|gzip|kiss|libffi|libressl|linux-headers|llvm|m4|\
+        baselayout|busybox|bzip2|curl|\
+        git|gzip|kiss|libressl|llvm|\
         make|musl|python|sqlite|xz|zlib);;
 
         *) set -- "$@" "$pkg" ;;
