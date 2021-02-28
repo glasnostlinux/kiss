@@ -1473,6 +1473,7 @@ args() {
                     KISS_COLOR="$KISS_COLOR" \
                     KISS_TMPDIR="$KISS_TMPDIR" \
                     KISS_PID="$KISS_PID" \
+                    KISS_BINREPO="$KISS_BINREPO" \
                     "$0" "$action" "$@"
 
             return
