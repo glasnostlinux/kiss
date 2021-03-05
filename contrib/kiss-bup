@@ -14,7 +14,7 @@ if [ -z $remote_dir ]; then
     exit 1
 fi
 
-if [ ! -f /usr/bin/sshx ]; then
+if [ ! -f /usr/bin/ssh ]; then
     echo "This tool requires openssh"
     echo "Once installed, you should generate keys and copy them to the remote server"
     exit 2
