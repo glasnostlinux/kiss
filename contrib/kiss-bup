@@ -1,0 +1,38 @@
+#!/bin/sh
+# Download and install binary packages from remote server
+
+cac_dir="${XDG_CACHE_HOME:-${HOME:?HOME is null}/.cache}/kiss"
+bin_dir="$cac_dir/bin/${KISS_BINREPO:-$(cat ${KISS_ROOT}/etc/os-arch)}"
+bup_dir="$cac_dir/bup"
+remote_dir=$KISS_BUP_REMOTE
+
+mkdir -p $bup_dir
+
+if [ -z $remote_dir ]; then
+    echo "You must set the environment variable KISS_BUP_REMOTE"
+    echo "E.g.: export KISS_BUP_REMOTE=user@buildmachine:/home/builder/.cache/kiss/bin/aarch64"
+    exit 1
+fi
+
+if [ ! -f /usr/bin/sshx ]; then
+    echo "This tool requires openssh"
+    echo "Once installed, you should generate keys and copy them to the remote server"
+    exit 2
+fi
+
+if [ ! -f /usr/bin/rsync ]; then
+    echo "This tool requires rsync"
+    exit 3
+fi
+
+# Get only packages which are are in $remote_dir but not in $bin_dir.
+# Store them in $bup_dir
+rsync -a -i --progress  --compare-dest=$bin_dir $remote_dir $bup_dir
+
+# Install each of the downloaded tarballs,
+# move to $bin_dir
+for tarball in $bup_dir/*.gz; do
+    [ -f "$tarball" ] || continue
+    KISS_FORCE=1 kiss i $tarball
+    mv $tarball $bin_dir
+done
