@@ -1,38 +1,44 @@
 #!/bin/sh
-# Download and install binary packages from remote server
+# Download and install binary packages from remote a server
 
+# Set up directories
+arch="$(cat ${KISS_ROOT}/etc/os-arch)"
 cac_dir="${XDG_CACHE_HOME:-${HOME:?HOME is null}/.cache}/kiss"
-bin_dir="$cac_dir/bin/${KISS_BINREPO:-$(cat ${KISS_ROOT}/etc/os-arch)}"
+bin_repo="${KISS_BINREPO:-$arch}"
+bin_dir="$cac_dir/bin/$bin_repo"
 bup_dir="$cac_dir/bup"
-remote_dir=$KISS_BUP_REMOTE
+remote_dir=$KISS_REMOTE_REPO
 
-mkdir -p $bup_dir
-
-if [ -z $remote_dir ]; then
-    echo "You must set the environment variable KISS_BUP_REMOTE"
-    echo "E.g.: export KISS_BUP_REMOTE=user@buildmachine:/home/builder/.cache/kiss/bin/aarch64"
+if [ -z "$remote_dir" ]; then
+    echo "You must set KISS_REMOTE_REPO"
     exit 1
 fi
 
-if [ ! -f /usr/bin/ssh ]; then
-    echo "This tool requires openssh"
-    echo "Once installed, you should generate keys and copy them to the remote server"
-    exit 2
-fi
+echo "Getting hashes for from $remote_dir"
 
-if [ ! -f /usr/bin/rsync ]; then
-    echo "This tool requires rsync"
-    exit 3
-fi
+# Prepare files if they don't exist
+mkdir -p $bup_dir
+mkdir -p $bin_dir
+touch $bin_dir/repo.index
 
-# Get only packages which are are in $remote_dir but not in $bin_dir.
-# Store them in $bup_dir
-rsync -a -i --progress  --compare-dest=$bin_dir $remote_dir $bup_dir
+# Get list of hashes from the remote server
+curl -s "$remote_dir/repo.index" > $bup_dir/repo.index
 
-# Install each of the downloaded tarballs,
-# move to $bin_dir
-for tarball in $bup_dir/*.gz; do
-    [ -f "$tarball" ] || continue
-    KISS_FORCE=1 kiss i $tarball
-    mv $tarball $bin_dir
+# For each remote hash, see if it's different to the local repo
+# Download and install the package if it's different
+cd $bup_dir
+cat repo.index | while read -r key val; do
+    different=`grep "$val" $bin_dir/repo.index | grep "$key"`
+
+    if [ -z "$different" ]; then
+        echo "$val"
+        curl -# -o "$bup_dir/$val" "$remote_dir/$val"
+        KISS_FORCE=1 kiss i $val
+
+        # Update the repo index with the new package hash
+        sed -i "/${val%@*}@/d" $bin_dir/repo.index
+        sha256sum $val >> $bin_dir/repo.index
+        mv $val $bin_dir
+    fi
+
 done

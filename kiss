@@ -574,6 +574,8 @@ pkg_tar() (
     # across implementations.
     cd "$pkg_dir/$1"
 
+    filename="$bin_dir/$1@$version-$release.tar.${KISS_COMPRESS:=gz}"
+
     # Create a tarball from the contents of the built package.
     tar cf - . | case ${KISS_COMPRESS:=gz} in
         bz2)  bzip2 -z ;;
@@ -582,9 +584,17 @@ pkg_tar() (
         lz)   lzip -z  ;;
         xz)   xz -zT 0 ;;
         zst)  zstd -z  ;;
-    esac > "$bin_dir/$1@$version-$release.tar.${KISS_COMPRESS:=gz}"
+    esac > "$filename"
 
     log "$1" "Successfully created tarball"
+
+    # Update the list of hashes with the new package
+    touch $bin_dir/repo.index
+    sed -i "/$1@/d" $bin_dir/repo.index
+    sha256sum $filename >> $bin_dir/repo.index
+    escaped_dir="$(echo $bin_dir | sed 's/\//\\\//g')"
+    sed -i "s/$escaped_dir\///g" $bin_dir/repo.index
+    log "$1" "Updated repo index"
     run_hook post-package "$1"
 )
 
@@ -1608,6 +1618,38 @@ args() {
     fi
 }
 
+setup_crossflags() {
+
+    # Uses GNU Makefile terminology:
+    # "build" - The machine you are building on
+    # "host"  - The machine you are building for
+    export KISS_XBUILD_TRIPLE=$(cat /etc/os-arch)
+    export KISS_XHOST_TRIPLE=$(cat $KISS_ROOT/etc/os-arch)
+
+    set -f
+    old_ifs=$IFS
+    IFS=-
+
+    set -- $KISS_XBUILD_TRIPLE
+    export KISS_XBUILD_ARCH=$1
+    export KISS_XBUILD_SYS=$2
+    export KISS_XBUILD_ABI=$3
+
+    set -- $KISS_XHOST_TRIPLE
+    export KISS_XHOST_ARCH=$1
+    export KISS_XHOST_SYS=$2
+    export KISS_XHOST_ABI=$3
+
+    IFS=$old_ifs
+    set +f
+
+    # Flags used for pkgconfig
+    export PKG_CONFIG_PATH=
+    export PKG_CONFIG_LIBDIR=${KISS_ROOT}/usr/lib/pkgconfig:${KISS_ROOT}/usr/share/pkgconfig
+    export PKG_CONFIG_SYSROOT_DIR=${KISS_ROOT}
+
+}
+
 main() {
     # Globally disable globbing and enable exit-on-error.
     set -ef
@@ -1655,6 +1697,9 @@ main() {
 
     # Define some paths which we will then use throughout the script.
     sys_db=$KISS_ROOT/${pkg_db:=var/db/kiss/installed}
+
+    # Set variables which help with cross building
+    setup_crossflags
 
     # This allows for automatic setup of a KISS chroot and will
     # do nothing on a normal system.
