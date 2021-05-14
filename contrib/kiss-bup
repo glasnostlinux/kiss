@@ -8,6 +8,7 @@ bin_repo="${KISS_BINREPO:-$arch}"
 bin_dir="$cac_dir/bin/$bin_repo"
 bup_dir="$cac_dir/bup"
 remote_dir=$KISS_REMOTE_REPO
+repo_index_name=repo.index
 
 if [ -z "$remote_dir" ]; then
     echo "You must set KISS_REMOTE_REPO"
@@ -19,16 +20,16 @@ echo "Getting hashes for from $remote_dir"
 # Prepare files if they don't exist
 mkdir -p $bup_dir
 mkdir -p $bin_dir
-touch $bin_dir/repo.index
+touch $bin_dir/$repo_index_name
 
 # Get list of hashes from the remote server
-curl -s "$remote_dir/repo.index" > $bup_dir/repo.index
+curl -s "$remote_dir/$repo_index_name" > $bup_dir/$repo_index_name
 
 # For each remote hash, see if it's different to the local repo
 # Download and install the package if it's different
 cd $bup_dir
-cat repo.index | while read -r key val; do
-    different=`grep "$val" $bin_dir/repo.index | grep "$key"`
+cat $repo_index_name | while read -r key val; do
+    different=`grep "$val" $bin_dir/$repo_index_name | grep "$key"`
 
     if [ -z "$different" ]; then
         echo "$val"
@@ -36,8 +37,8 @@ cat repo.index | while read -r key val; do
         KISS_FORCE=1 kiss i $val
 
         # Update the repo index with the new package hash
-        sed -i "/${val%@*}@/d" $bin_dir/repo.index
-        sha256sum $val >> $bin_dir/repo.index
+        sed -i "/${val%@*}@/d" $bin_dir/$repo_index_name
+        sha256sum $val >> $bin_dir/$repo_index_name
         mv $val $bin_dir
     fi
 

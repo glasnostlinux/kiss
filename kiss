@@ -191,7 +191,6 @@ pkg_cache() {
 
     set +f
     set -f -- "$bin_dir/$1"[#@]"$version-$release.tar."*
-
     [ -f "$2" ] && shift
 
     tar_file=$1
@@ -574,7 +573,8 @@ pkg_tar() (
     # across implementations.
     cd "$pkg_dir/$1"
 
-    filename="$bin_dir/$1@$version-$release.tar.${KISS_COMPRESS:=gz}"
+    filename="$1@$version-$release.tar.${KISS_COMPRESS:=gz}"
+    repofile="repo.index"
 
     # Create a tarball from the contents of the built package.
     tar cf - . | case ${KISS_COMPRESS:=gz} in
@@ -584,16 +584,21 @@ pkg_tar() (
         lz)   lzip -z  ;;
         xz)   xz -zT 0 ;;
         zst)  zstd -z  ;;
-    esac > "$filename"
+    esac > "$bin_dir/$filename"
 
-    log "$1" "Successfully created tarball"
+    log "$1" "Successfully created tarball in $bin_dir"
 
-    # Update the list of hashes with the new package
-    touch $bin_dir/repo.index
-    sed -i "/$1@/d" $bin_dir/repo.index
-    sha256sum $filename >> $bin_dir/repo.index
-    escaped_dir="$(echo $bin_dir | sed 's/\//\\\//g')"
-    sed -i "s/$escaped_dir\///g" $bin_dir/repo.index
+    # Make sure the index file exists
+    touch $bin_dir/$repofile
+
+    # Remove any instances of this package in the index
+    # This will leave only the latest version
+    sed -i "/$1@/d" $bin_dir/$repofile
+
+    # Append the hash to the index
+    cd $bin_dir
+    sha256sum $filename >> $bin_dir/$repofile
+
     log "$1" "Updated repo index"
     run_hook post-package "$1"
 )
@@ -639,7 +644,7 @@ pkg_build() {
 
     for pkg do pkg_lint "$pkg"; done
 
-    log "Checking for pre-built dependencies"
+    log "$pkg" "Checking for pre-built dependencies"
 
     # Install any pre-built dependencies if they exist in the binary
     # directory and are up to date.
@@ -673,6 +678,15 @@ pkg_build() {
         # Log the version so we can pass it to the package build file.
         read -r build_version _ < "$repo_dir/version"
 
+        log "$pkg" " Building on  = $KISS_XBUILD_TRIPLE"
+        log "$pkg" " Building for = $KISS_XHOST_TRIPLE"
+        log "$pkg" " Binary repo  = $bin_dir"
+        log "$pkg" " KISS_ROOT    = $KISS_ROOT"
+        log "$pkg" " CC           = $CC"
+        log "$pkg" " CXX          = $CXX"
+        log "$pkg" " CFLAGS       = $CFLAGS"
+        log "$pkg" " CXXFLAGS     = $CXXFLAGS"
+        log "$pkg" " LDFLAGS      = $LDFLAGS"
         log "$pkg" "Starting build"
         run_hook pre-build "$pkg" "$pkg_dir/$pkg"
 
@@ -808,7 +822,7 @@ pkg_verify() {
 
     [ -z "$mismatch" ] || die "Checksum mismatch with: ${mismatch% }"
 
-    log "Verified all checksums"
+    log "$pkg" "Verified all checksums"
 }
 
 pkg_conflicts() {
@@ -1620,11 +1634,27 @@ args() {
 
 setup_crossflags() {
 
+    # The os-arch file must exist at this point
+    osfile="$KISS_ROOT/etc/os-arch"
+    if [ ! -f "$osfile" ]; then
+        die "The required file '$osfile' does not exist!"
+    fi
+
     # Uses GNU Makefile terminology:
     # "build" - The machine you are building on
     # "host"  - The machine you are building for
+    # For a non-cross build, these values will be the same
     export KISS_XBUILD_TRIPLE=$(cat /etc/os-arch)
     export KISS_XHOST_TRIPLE=$(cat $KISS_ROOT/etc/os-arch)
+
+    # We need to know the version of llvm for linking
+    llvm_file="$KISS_ROOT/var/db/kiss/installed/llvm/version"
+    if [ -f "$llvm_file" ]; then
+        llvm_ver=$(cat $llvm_file | cut -d " " -f 1)
+    else
+        # Default
+        llvm_ver=12.0.0
+    fi
 
     set -f
     old_ifs=$IFS
@@ -1647,6 +1677,31 @@ setup_crossflags() {
     export PKG_CONFIG_PATH=
     export PKG_CONFIG_LIBDIR=${KISS_ROOT}/usr/lib/pkgconfig:${KISS_ROOT}/usr/share/pkgconfig
     export PKG_CONFIG_SYSROOT_DIR=${KISS_ROOT}
+
+    # Load CFLAGS etc.
+    # This should always be present
+    flagfile="$KISS_ROOT/etc/os-buildflags"
+    if [ ! -f "$flagfile" ]; then
+        die "The file '$flagfile' does not exist!"
+    fi
+
+    # Set the compiler target architecture
+    if [ -z "$KISS_ROOT" ]; then
+        # Local build. Allow user-set CFLAGS as per normal KISS, or override them in /etc/os-buildflags
+        source $flagfile
+        export CC="${CC:-clang}"
+        export CXX="${CXX:-clang++}"
+    else
+        # Cross build. CFLAGS will always come from $KISS_ROOT/etc/os-buildflags
+        unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+        source $flagfile
+        flags="--target=$KISS_XHOST_TRIPLE --sysroot=${KISS_ROOT}/usr -resource-dir=${KISS_ROOT}/usr/lib/clang/$llvm_ver -fPIC "
+        export   CFLAGS="$CFLAGS $flags"
+        export CXXFLAGS="$CXXFLAGS $flags"
+        export  LDFLAGS="$LDFLAGS --sysroot=$KISS_ROOT/usr -L${KISS_ROOT}/usr/lib "
+        export       CC="clang   $CFLAGS "
+        export      CXX="clang++ $CXXFLAGS "
+    fi
 
 }
 
@@ -1699,7 +1754,22 @@ main() {
     sys_db=$KISS_ROOT/${pkg_db:=var/db/kiss/installed}
 
     # Set variables which help with cross building
-    setup_crossflags
+    if [ -z "$KISS_BINREPO" ]; then
+        setup_crossflags
+
+        # Bin repo will be "local" for normal builds, for chroot builds
+        # it will be the last part of $KISS_ROOT appended with md5sum of
+        # the full $KISS_ROOT path. This keeps packages built for different
+        # root directories in separate directories.
+        lastbit="${KISS_ROOT##*/}"
+        if [ -z "$lastbit" ]; then
+            binrepo="local"
+        else
+            binrepo="${lastbit}_$(echo "$KISS_ROOT" | md5sum | cut -c1-32)"
+        fi
+    else
+        binrepo="$KISS_BINREPO"
+    fi
 
     # This allows for automatic setup of a KISS chroot and will
     # do nothing on a normal system.
@@ -1711,7 +1781,7 @@ main() {
         "${cac_dir:="${XDG_CACHE_HOME:-"${HOME:?HOME is null}/.cache"}/kiss"}" \
             "${src_dir:="$cac_dir/sources"}" \
             "${log_dir:="$cac_dir/logs/${date%-*}"}" \
-            "${bin_dir:="$cac_dir/bin/"${KISS_BINREPO:-$(cat ${KISS_ROOT}/etc/os-arch)}}" \
+            "${bin_dir:="$cac_dir/bin/"$binrepo}" \
         "${tmp_dir:="${KISS_TMPDIR:="$cac_dir/proc"}/$pid"}" \
             "${mak_dir:="$tmp_dir/build"}" \
             "${pkg_dir:="$tmp_dir/pkg"}" \
