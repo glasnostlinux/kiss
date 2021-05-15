@@ -666,6 +666,17 @@ pkg_build() {
     for pkg do
         log "$pkg" "Building package ($((in+=1))/$#)"
 
+        log "$pkg" " Building on  = $KISS_XBUILD_TRIPLE"
+        log "$pkg" " Building for = $KISS_XHOST_TRIPLE"
+        log "$pkg" " Binary repo  = $bin_dir"
+        log "$pkg" " KISS_ROOT    = $KISS_ROOT"
+        log "$pkg" " CC           = $CC"
+        log "$pkg" " CXX          = $CXX"
+        log "$pkg" " CFLAGS       = $CFLAGS"
+        log "$pkg" " CXXFLAGS     = $CXXFLAGS"
+        log "$pkg" " LDFLAGS      = $LDFLAGS"
+        log "$pkg" "Starting build"
+
         run_hook pre-extract "$pkg" "$pkg_dir/$pkg"
         pkg_extract "$pkg"
         repo_dir=$(pkg_find "$pkg")
@@ -678,16 +689,6 @@ pkg_build() {
         # Log the version so we can pass it to the package build file.
         read -r build_version _ < "$repo_dir/version"
 
-        log "$pkg" " Building on  = $KISS_XBUILD_TRIPLE"
-        log "$pkg" " Building for = $KISS_XHOST_TRIPLE"
-        log "$pkg" " Binary repo  = $bin_dir"
-        log "$pkg" " KISS_ROOT    = $KISS_ROOT"
-        log "$pkg" " CC           = $CC"
-        log "$pkg" " CXX          = $CXX"
-        log "$pkg" " CFLAGS       = $CFLAGS"
-        log "$pkg" " CXXFLAGS     = $CXXFLAGS"
-        log "$pkg" " LDFLAGS      = $LDFLAGS"
-        log "$pkg" "Starting build"
         run_hook pre-build "$pkg" "$pkg_dir/$pkg"
 
         # Call the build script, log the output to the terminal and to a file.
@@ -1637,7 +1638,7 @@ setup_crossflags() {
     # The os-arch file must exist at this point
     osfile="$KISS_ROOT/etc/os-arch"
     if [ ! -f "$osfile" ]; then
-        die "The required file '$osfile' does not exist!"
+        die "The required file '$osfile' does not exist! This should contain the target triple."
     fi
 
     # Uses GNU Makefile terminology:
@@ -1648,12 +1649,12 @@ setup_crossflags() {
     export KISS_XHOST_TRIPLE=$(cat $KISS_ROOT/etc/os-arch)
 
     # We need to know the version of llvm for linking
-    llvm_file="$KISS_ROOT/var/db/kiss/installed/llvm/version"
-    if [ -f "$llvm_file" ]; then
-        llvm_ver=$(cat $llvm_file | cut -d " " -f 1)
+    llvm_file="/var/db/kiss/installed/llvm/version"
+    if [ -f "${KISS_ROOT}/${llvm_file}" ]; then
+        llvm_ver=$(cat ${KISS_ROOT}${llvm_file} | cut -d " " -f 1)
     else
-        # Default
-        llvm_ver=12.0.0
+        # Default use build version
+        llvm_ver=$(cat ${llvm_file} | cut -d " " -f 1)
     fi
 
     set -f
