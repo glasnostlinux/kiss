@@ -2,7 +2,7 @@
 # shellcheck source=/dev/null
 #
 # This is a simple package manager written in POSIX shell for use
-# in KISS Linux (https://k1ss.org).
+# in KISS Linux (https://k1sslinux.org).
 #
 # Created by Dylan Araps.
 
@@ -37,17 +37,8 @@ as_root() {
     [ "$uid" = 0 ] || log "Using '${su:=su}' (to become ${user:=root})"
 
     case ${su##*/} in
-        doas|sudo|ssu)
-            "$su" -u "$user" -- env "$@"
-        ;;
-
-        su)
-            "$su" -c "env $* <&3" "$user" 3<&0 </dev/tty
-        ;;
-
-        *)
-            die "Invalid KISS_SU value: ${su##*/} (valid: doas, sudo, ssu, su)"
-        ;;
+        su) "$su" -c "env $* <&3" "$user" 3<&0 </dev/tty ;;
+        *) "$su" -u "$user" -- env "$@" ;;
     esac
 }
 
@@ -100,7 +91,7 @@ decompress() {
         *.lz)       lzip -dc  ;;
         *.tar)      cat       ;;
         *.tgz|*.gz) gzip -d   ;;
-        *.xz|*.txz) xz -dcT 0 ;;
+        *.xz|*.txz) xz -dcT0 ;;
         *.zst)      zstd -dc  ;;
     esac < "$1"
 }
@@ -227,10 +218,17 @@ pkg_sources() {
             log "$1" "Downloading $src"
             mkdir -p "$PWD/$dest"
 
+            # We don't want interrupt to exit immediately here, so we change the
+            # behaviour here.
+            trap pkg_clean INT
+
             curl "$src" -fLo "./${dest:-.}/${src##*/}" || {
                 rm -f "./${dest:-.}/${src##*/}"
                 die "$1" "Failed to download $src"
             }
+
+            # Restore the trap to the original value.
+            trap 'pkg_clean; exit 1' INT
 
         # Local source (relative).
         elif [ -e "$repo_dir/$src" ]; then
@@ -443,6 +441,14 @@ pkg_strip() {
     done 2>/dev/null ||:
 }
 
+pkg_fix_deps_fullpath() {
+    # Return the canonical path of libraries extracted by readelf.
+    while read -r dep _ rslv _; do
+        [ "$dep" = "$1" ] || continue
+        printf '%s\n' "$rslv"
+    done
+}
+
 pkg_fix_deps() {
     # Dynamically look for missing runtime dependencies by checking each
     # binary and library with 'ldd'. This catches any extra libraries and or
@@ -459,13 +465,19 @@ pkg_fix_deps() {
     find "$pkg_dir/${PWD##*/}/" -type f 2>/dev/null |
 
     while read -r file; do
+        # We call ldd regardless here, because we also use it to retrieve the
+        # fullpath of a library when using readelf. Best use we have here is
+        # saving it in a buffer, so we don't use the dynamic loader everytime we
+        # need to reference it.
+        lddbuf=$(ldd -- "$file" 2>/dev/null) ||:
+
         case $elf_cmd in
             *readelf)
                 "$elf_cmd" -d "$file"
             ;;
 
             *)
-                ldd -- "$file"
+                printf '%s\n' "$lddbuf"
             ;;
         esac 2>/dev/null |
 
@@ -473,8 +485,14 @@ pkg_fix_deps() {
             case $line in
                 *NEEDED*\[*\] | *'=>'*)
                     # readelf: 0x0000 (NEEDED) Shared library: [libjson-c.so.5]
-                    line=${line##*[}
-                    line=${line%%]*}
+                    line=${line##*\[}
+                    line=${line%%\]*}
+
+                    # Retrieve the fullpath of the library from our ldd buffer.
+                    case $elf_cmd in
+                        *readelf) line=$(printf '%s\n' "$lddbuf" |
+                                         pkg_fix_deps_fullpath "$line")
+                    esac
 
                     # ldd:     libjson-c.so.5 => /lib/libjson-c.so.5 ...
                     line=${line##*=> }
@@ -608,6 +626,8 @@ pkg_build() {
 
     log "Resolving dependencies"
 
+    nexplicit="$#"
+
     # Mark packages passed on the command-line separately from those
     # detected as dependencies. We need to treat explicitly passed packages
     # differently from those pulled in as dependencies.
@@ -639,32 +659,39 @@ pkg_build() {
 
     log "Building: $*"
 
-    # Only ask for confirmation if more than one package needs to be built.
-    [ "$#" -gt 1 ] || [ "$pkg_update" ] && { prompt || exit 0 ;}
+    # Only ask for confirmation if dependencies need to be built.
+    [ "$#" -ne "$nexplicit" ] || [ "$pkg_update" ] && prompt
 
     for pkg do pkg_lint "$pkg"; done
 
-    log "$pkg" "Checking for pre-built dependencies"
+    log "Checking for pre-built dependencies"
 
     # Install any pre-built dependencies if they exist in the binary
     # directory and are up to date.
     for pkg do
-        ! contains "$explicit_build" "$pkg" && pkg_cache "$pkg" && {
+        if ! contains "$explicit_build" "$pkg" && pkg_cache "$pkg"; then
             log "$pkg" "Found pre-built binary, installing"
             (KISS_FORCE=1 args i "$tar_file")
-
-            # Remove the now installed package from the build list.
-            shift
-        }
+        else
+            remaining_pkgs=" $remaining_pkgs $pkg"
+        fi
     done
+
+    # See [1] at top of script.
+    # shellcheck disable=2046,2086
+    set -- $remaining_pkgs
 
     for pkg do pkg_sources "$pkg"; done
     pkg_verify "$@"
 
+    # Record the total number of packages under a variable so that they are
+    # accessible to hooks.
+    pkg_total=$#
+
     # Finally build and create tarballs for all passed packages and
     # dependencies.
     for pkg do
-        log "$pkg" "Building package ($((in+=1))/$#)"
+        log "$pkg" "Building package ($((pkg_cur+=1))/$pkg_total)"
 
         log "$pkg" " Building on  = $KISS_XBUILD_TRIPLE"
         log "$pkg" " Building for = $KISS_XHOST_TRIPLE"
@@ -692,7 +719,7 @@ pkg_build() {
         run_hook pre-build "$pkg" "$pkg_dir/$pkg"
 
         # Call the build script, log the output to the terminal and to a file.
-        # There's no PIPEFAIL in POSIX shelll so we must resort to tricks like
+        # There's no PIPEFAIL in POSIX shell so we must resort to tricks like
         # killing the script ourselves.
         { "$repo_dir/build" "$pkg_dir/$pkg" "$build_version" 2>&1 || {
             log "$pkg" "Build failed"
@@ -719,7 +746,7 @@ pkg_build() {
         find "$pkg_dir/$pkg/usr/lib" -name \*.la -exec rm -f {} + 2>/dev/null ||:
 
         # Remove this unneeded file from all packages as it is an endless
-        # source of conflicts. This is used with info pages we we do not support.
+        # source of conflicts. This is used with info pages we do not support.
         rm -f "$pkg_dir/$pkg/usr/lib/charset.alias"
 
         # Create the manifest file early and make it empty. This ensures that
@@ -1148,7 +1175,7 @@ pkg_remove() {
     [ "$KISS_FORCE" = 1 ] || {
         log "$1" "Checking for reverse dependencies"
 
-        (cd "$sys_db"; set +f; grep -lFx "$1" -- */depends) &&
+        (cd "$sys_db"; set +f; grep -lFx -- "$1" */depends) &&
             die "$1" "Can't remove package, others depend on it"
     }
 
@@ -1170,7 +1197,8 @@ pkg_remove() {
 
     # Reset 'trap' to its original value. Removal is done so
     # we no longer need to block 'Ctrl+C'.
-    trap pkg_clean EXIT INT
+    trap pkg_clean EXIT
+    trap 'pkg_clean; exit 1' INT
 
     log "$1" "Removed successfully"
 }
@@ -1294,7 +1322,8 @@ pkg_install() {
 
     # Reset 'trap' to its original value. Installation is done so we no longer
     # need to block 'Ctrl+C'.
-    trap pkg_clean EXIT INT
+    trap pkg_clean EXIT
+    trap 'pkg_clean; exit 1' INT
 
     if [ -x "$sys_db/$pkg_name/post-install" ]; then
         log "$pkg_name" "Running post-install hook"
@@ -1422,7 +1451,7 @@ pkg_updates() {
         log "Detected package manager update"
         log "The package manager will be updated first"
 
-        prompt || exit 0
+        prompt
 
         pkg_build kiss
         args i kiss
@@ -1573,7 +1602,7 @@ args() {
         l|list)     pkg_list "$@" ;;
         u|update)   pkg_updates ;;
         s|search)   for pkg do pkg_find "$pkg" all; done ;;
-        v|version)  printf '5.2.4\n' ;;
+        v|version)  printf '5.3.1\n' ;;
 
         '')
             log 'kiss [a|b|c|d|i|l|r|s|u|v] [pkg]...'
@@ -1727,7 +1756,8 @@ main() {
 
     # Catch errors and ensure that build files and directories are cleaned
     # up before we die. This occurs on 'Ctrl+C' as well as success and error.
-    trap pkg_clean EXIT INT
+    trap pkg_clean EXIT
+    trap 'pkg_clean; exit 1' INT
 
     # Figure out which 'sudo' command to use based on the user's choice or what
     # is available on the system.
@@ -1741,7 +1771,7 @@ main() {
     )"} || elf_cmd=ldd
 
     # Store the date and time of script invocation to be used as the name of
-    # the log files the package manager creates uring builds.
+    # the log files the package manager creates during builds.
     time=$(date +%Y-%m-%d-%H:%M)
 
     # Make note of the user's current ID to do root checks later on.

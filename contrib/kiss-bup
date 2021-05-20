@@ -1,5 +1,5 @@
 #!/bin/sh
-# Download and install binary packages from remote a server
+# Download and install binary updates from remote a server
 
 # Set up directories
 arch="$(cat ${KISS_ROOT}/etc/os-arch)"
