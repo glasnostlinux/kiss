@@ -374,12 +374,32 @@ pkg_depends() {
 
         # Recurse through the dependencies of the child packages.
         while read -r dep _ || [ "$dep" ]; do
-            [ "${dep##\#*}" ] && pkg_depends "$dep" '' "$3"
+            [ -z "$KISS_ROOT" ]                    && [ "${dep##\#*}" ] && pkg_depends "$dep" '' "$3"
+            [ ! -z "$KISS_ROOT" ] && [ -z "$_" ]   && [ "${dep##\#*}" ] && pkg_depends "$dep" '' "$3"
+            [ ! -z "$KISS_ROOT" ] && [ ! -z "$_" ] && [ "${dep##\#*}" ] && pkg_xdepends "$dep" '' "$3"
         done 2>/dev/null < "$(pkg_find "$1")/depends" ||:
 
         # After child dependencies are added to the list,
         # add the package which depends on them.
         [ "$2" = explicit ] || deps="$deps $1 "
+    }
+}
+
+pkg_xdepends() {
+    # Resolve all dependencies and generate an ordered list. The deepest
+    # dependencies are listed first and then the parents in reverse order.
+    contains "$xdeps" "$1" || {
+        # Filter out aleady installed dependencies.
+        [ -d "/var/db/kiss/installed/$1" ] && return
+
+        # Recurse through the dependencies of the child packages.
+        while read -r xdep _ || [ "$xdep" ]; do
+            [ "${xdep##\#*}" ] && pkg_xdepends "$xdep" '' "$3"
+        done 2>/dev/null < "$(pkg_find "$1")/depends" ||:
+
+        # After child dependencies are added to the list,
+        # add the package which depends on them.
+        [ "$2" = explicit ] || xdeps="$xdeps $1 "
     }
 }
 
@@ -657,6 +677,11 @@ pkg_build() {
         contains "$deps" "$pkg" || explicit2=" $explicit2 $pkg "
     done
     explicit=$explicit2
+
+
+    # If cross building, make sure the build machine has the correct deps
+    set -- $xdeps
+    [ "$#" -gt 0 ] && die "You need the following packages on your build machine: $*"
 
     # See [1] at top of script.
     # shellcheck disable=2046,2086
@@ -1746,7 +1771,7 @@ main() {
 
     # Allow the user to disable colors in output via an environment variable.
     # Check this once so as to not slow down printing.
-    [ "$KISS_COLOR" = 0 ] || ! [ -t 1 ] || lcol='\033[1;33m' lcol2='\033[1;34m' lcol3='\033[1;31m' lclr='\033[m'
+    [ "$KISS_COLOR" = 0 ] || ! [ -t 1 ] || lcol='\033[1;33m' lcol2='\033[1;34m' lcol3='\033[31m' lclr='\033[m'
 
     # Store the original working directory to ensure that relative paths
     # passed by the user on the command-line properly resolve to locations
