@@ -96,7 +96,7 @@ decompress() {
         *.lz)       lzip -dc  ;;
         *.tar)      cat       ;;
         *.tgz|*.gz) gzip -d   ;;
-        *.xz|*.txz) xz -dcT0 ;;
+        *.xz|*.txz) xz -dcT0  ;;
         *.zst)      zstd -dc  ;;
     esac < "$1"
 }
@@ -187,6 +187,7 @@ pkg_cache() {
 
     set +f
     set -f -- "$bin_dir/$1"[#@]"$version-$release.tar."*
+
     [ -f "$2" ] && shift
 
     tar_file=$1
@@ -386,6 +387,7 @@ pkg_depends() {
 }
 
 pkg_xdepends() {
+    # Similar to pkg_depends, but always for the build machine.
     # Resolve all dependencies and generate an ordered list. The deepest
     # dependencies are listed first and then the parents in reverse order.
     contains "$xdeps" "$1" || {
@@ -625,7 +627,7 @@ pkg_tar() (
         gz)   gzip -6  ;;
         lzma) lzma -z  ;;
         lz)   lzip -z  ;;
-        xz)   xz -zT 0 ;;
+        xz)   xz -zT0  ;;
         zst)  zstd -z  ;;
     esac > "$bin_dir/$filename"
 
@@ -1632,7 +1634,7 @@ args() {
         l|list)     pkg_list "$@" ;;
         u|update)   pkg_updates ;;
         s|search)   for pkg do pkg_find "$pkg" all; done ;;
-        v|version)  printf '5.3.1\n' ;;
+        v|version)  printf '5.3.2\n' ;;
 
         '')
             log 'kiss [a|b|c|d|i|l|r|s|u|v] [pkg]...'
